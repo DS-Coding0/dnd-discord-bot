@@ -1,0 +1,23 @@
+description: |
+  `Subrace`
+allOf:
+  - $ref: './combined.yml#/APIReference'
+  - type: object
+    properties:
+      desc:
+        description: Description of the subrace.
+        type: string
+      race:
+        description: 'Parent race for the subrace.'
+        allOf:
+          - $ref: './combined.yml#/APIReference'
+      ability_bonuses:
+        description: 'Additional ability bonuses for the subrace.'
+        type: array
+        items:
+          $ref: './combined.yml#/AbilityBonus'
+      racial_traits:
+        description: 'List of traits that for the subrace.'
+        type: array
+        items:
+          $ref: './combined.yml#/APIReference'

@@ -1,0 +1,203 @@
+# [4.1.0](https://github.com/5e-bits/5e-database/compare/v4.0.0...v4.1.0) (2025-09-15)
+
+
+### Features
+
+* **2024:** Adding equipment and equipment categories ([#860](https://github.com/5e-bits/5e-database/issues/860)) ([15fb5eb](https://github.com/5e-bits/5e-database/commit/15fb5ebeb2eed406bd97e8ea566a67a59793b340))
+
+# [4.0.0](https://github.com/5e-bits/5e-database/compare/v3.26.1...v4.0.0) (2025-09-04)
+
+
+* refactor(race/subrace)!: remove redundant data ([#875](https://github.com/5e-bits/5e-database/issues/875)) ([67261fb](https://github.com/5e-bits/5e-database/commit/67261fbf4b1c5c785aeab47fbd4356c328b0593c)), closes [#874](https://github.com/5e-bits/5e-database/issues/874)
+
+
+### BREAKING CHANGES
+
+* dropped the `race.starting_proficiencies`,
+`race.starting_proficiency_options`, `subrace.starting_proficiencies`,
+`subrace.language_options`, and `subrace.languages` properties of all
+races and subraces in the database. Clients can instead find this data
+on the corresponding traits linked to each race or subrace.
+
+## How was it tested?
+
+I ran the database + API project locally with Docker and called the
+endpoints of the various classes and subclasses. I also ran the unit and
+integration tests in the API project.
+
+## Is there a Github issue this is resolving?
+
+## [4.4.0](https://github.com/5e-bits/5e-database/compare/v4.3.3...v4.4.0) (2026-03-14)
+
+
+### Features
+
+* **2024:** Add Traits + Species ([#1014](https://github.com/5e-bits/5e-database/issues/1014)) ([ccd3e1d](https://github.com/5e-bits/5e-database/commit/ccd3e1df1f1d9eda9c164f28fa5c61effaf898b3))
+
+## [4.3.3](https://github.com/5e-bits/5e-database/compare/v4.3.2...v4.3.3) (2026-03-04)
+
+
+### Bug Fixes
+
+* **2024:** Adjust choice implementation to match other top level choices ([#1018](https://github.com/5e-bits/5e-database/issues/1018)) ([4cbfe16](https://github.com/5e-bits/5e-database/commit/4cbfe16aacc8758d08b6a88e90c450f5328d1275))
+
+## [4.3.2](https://github.com/5e-bits/5e-database/compare/v4.3.1...v4.3.2) (2026-03-03)
+
+
+### Bug Fixes
+
+* **2024:** Acolyte's equipment_options to be consistent ([#1016](https://github.com/5e-bits/5e-database/issues/1016)) ([230de74](https://github.com/5e-bits/5e-database/commit/230de74ce5f0bc09fa554137931b0f0d2457aab3))
+* **2024:** Species don't have proficiencies ([b2081db](https://github.com/5e-bits/5e-database/commit/b2081dbe41ea24682cc115dff9ce2fa61116d272))
+
+## [4.3.1](https://github.com/5e-bits/5e-database/compare/v4.3.0...v4.3.1) (2026-02-21)
+
+
+### Bug Fixes
+
+* Correct Ankheg XP ([#1007](https://github.com/5e-bits/5e-database/issues/1007)) ([30696ae](https://github.com/5e-bits/5e-database/commit/30696ae6feeb5b712eb0cbd7af2b1f208e0c68c4))
+
+## [4.3.0](https://github.com/5e-bits/5e-database/compare/v4.2.3...v4.3.0) (2026-01-02)
+
+
+### Features
+
+* **2024:** Adding Backgrounds + related Feats and Proficiencies ([#973](https://github.com/5e-bits/5e-database/issues/973)) ([529c9fe](https://github.com/5e-bits/5e-database/commit/529c9fe5f5059bcda360d5799790a0acc42a8425))
+
+
+### Bug Fixes
+
+* add remaining 2024 Feats ([#982](https://github.com/5e-bits/5e-database/issues/982)) ([eeebd78](https://github.com/5e-bits/5e-database/commit/eeebd78ad01c5c3a93ac4b7827bc3d2574bbe720))
+
+## [4.2.3](https://github.com/5e-bits/5e-database/compare/v4.2.2...v4.2.3) (2025-12-17)
+
+
+### Bug Fixes
+
+* **ci:** Set repo on token to allow downstream trigger ([d91315c](https://github.com/5e-bits/5e-database/commit/d91315c4f08651f99a58e6ce5c2a6607bf455a22))
+
+## [4.2.2](https://github.com/5e-bits/5e-database/compare/v4.2.1...v4.2.2) (2025-12-17)
+
+
+### Bug Fixes
+
+* **ci:** Auto release ([#969](https://github.com/5e-bits/5e-database/issues/969)) ([c94ccd3](https://github.com/5e-bits/5e-database/commit/c94ccd3e2a8b5777a22cf30296ad99679308113d))
+* **release-please:** Include all commit types in changelog config ([c16433d](https://github.com/5e-bits/5e-database/commit/c16433dbd7b1bdd500733da5e1efe8f6de9c27fc))
+
+## [4.2.1](https://github.com/5e-bits/5e-database/compare/v4.2.0...v4.2.1) (2025-10-24)
+
+
+### Bug Fixes
+
+* **dependabot:** use build instead of deps ([#941](https://github.com/5e-bits/5e-database/issues/941)) ([782da71](https://github.com/5e-bits/5e-database/commit/782da71224510f0118de187c7f7431bf2780f616))
+
+## [4.2.0](https://github.com/5e-bits/5e-database/compare/v4.1.0...v4.2.0) (2025-10-24)
+
+
+### Features
+
+* **release:** Swap to release-please ([#934](https://github.com/5e-bits/5e-database/issues/934)) ([bf73da0](https://github.com/5e-bits/5e-database/commit/bf73da05f0a5044ca43db789d0871f351fde6ddd))
+
+## [3.26.1](https://github.com/5e-bits/5e-database/compare/v3.26.0...v3.26.1) (2025-06-30)
+
+
+### Bug Fixes
+
+* **trident:** change damage type to piercing ([#865](https://github.com/5e-bits/5e-database/issues/865)) ([84c2fe6](https://github.com/5e-bits/5e-database/commit/84c2fe653ecbfd9e51fb2755b922d17ce412889c))
+
+# [3.26.0](https://github.com/5e-bits/5e-database/compare/v3.25.1...v3.26.0) (2025-06-13)
+
+
+### Features
+
+* **2024:** Add a bunch of easy tables to 2024 ([#856](https://github.com/5e-bits/5e-database/issues/856)) ([40ec703](https://github.com/5e-bits/5e-database/commit/40ec703049aadb25607e44843c9afcafd5ce1b86))
+
+## [3.25.1](https://github.com/5e-bits/5e-database/compare/v3.25.0...v3.25.1) (2025-05-16)
+
+
+### Bug Fixes
+
+* Add subclass improvements to level features ([#836](https://github.com/5e-bits/5e-database/issues/836)) ([0907a8a](https://github.com/5e-bits/5e-database/commit/0907a8a18d7d92b8ba91d23e0c076d0598caebc8))
+
+# [3.25.0](https://github.com/5e-bits/5e-database/compare/v3.24.0...v3.25.0) (2025-05-04)
+
+
+### Features
+
+* **images:** Redirect image urls to new image urls ([#826](https://github.com/5e-bits/5e-database/issues/826)) ([be7e6aa](https://github.com/5e-bits/5e-database/commit/be7e6aad5c66e588af81730ead77480b0925720b))
+
+# [3.24.0](https://github.com/5e-bits/5e-database/compare/v3.23.0...v3.24.0) (2025-04-28)
+
+
+### Features
+
+* **magic-items:** Images for Deck of Many Things to Elemental Gems ([1936368](https://github.com/5e-bits/5e-database/commit/19363688c37cff32175f8784a54bbcf3182924ed))
+
+# [3.23.0](https://github.com/5e-bits/5e-database/compare/v3.22.0...v3.23.0) (2025-04-28)
+
+
+### Features
+
+* **magic-items:** Images for Boots of striding and sprinting to Deck of Illusions ([46155eb](https://github.com/5e-bits/5e-database/commit/46155ebea6594ef9864dfd329bb45b63668b4c8e))
+
+# [3.22.0](https://github.com/5e-bits/5e-database/compare/v3.21.0...v3.22.0) (2025-04-27)
+
+
+### Features
+
+* **images:** All remaining monster images ([4805d07](https://github.com/5e-bits/5e-database/commit/4805d07e433cd2fa4be82990bfe434ef40843086))
+
+# [3.21.0](https://github.com/5e-bits/5e-database/compare/v3.20.0...v3.21.0) (2025-04-27)
+
+
+### Features
+
+* **images:** Hezrou to Manticore, Warhorse Skeleton, and Werebear to White Dragon Wyrmling ([3f54cae](https://github.com/5e-bits/5e-database/commit/3f54caeacceeb38b351424cbc7f6653b926c6ae4))
+
+# [3.20.0](https://github.com/5e-bits/5e-database/compare/v3.19.2...v3.20.0) (2025-04-27)
+
+
+### Features
+
+* **release:** Remove PAT dependency ([#818](https://github.com/5e-bits/5e-database/issues/818)) ([aefc47e](https://github.com/5e-bits/5e-database/commit/aefc47eb420b58a3b746d68148a5ce93073cf627))
+
+## [3.19.2](https://github.com/5e-bits/5e-database/compare/v3.19.1...v3.19.2) (2025-04-27)
+
+
+### Bug Fixes
+
+* **monsters:** white spaces, OCR, etc. ([#816](https://github.com/5e-bits/5e-database/issues/816)) ([30913dd](https://github.com/5e-bits/5e-database/commit/30913dd4d4295f3017a148d3f9c3cb6ae2b49a9b))
+
+## [3.19.1](https://github.com/5e-bits/5e-database/compare/v3.19.0...v3.19.1) (2025-04-27)
+
+
+### Bug Fixes
+
+* **images:** Add image for Grick ([cf5105d](https://github.com/5e-bits/5e-database/commit/cf5105d99637a0e89480b7bca8a6d08e934bd2bf))
+
+# [3.19.0](https://github.com/5e-bits/5e-database/compare/v3.18.0...v3.19.0) (2025-04-27)
+
+
+### Features
+
+* **images:** Duergar to Ghost ([2460333](https://github.com/5e-bits/5e-database/commit/24603330712099ea478a61c9924a262d43a06fb2))
+* **images:** Ghoul to Hell Hound ([7061e7f](https://github.com/5e-bits/5e-database/commit/7061e7f0237527de06c46426ab965595faa75fdf))
+
+# [3.18.0](https://github.com/5e-bits/5e-database/compare/v3.17.0...v3.18.0) (2025-04-26)
+
+
+### Features
+
+* **images:** Cultist to Druid ([92d2db9](https://github.com/5e-bits/5e-database/commit/92d2db94de4a4fae89a8aa99804759c0487bcd54))
+
+# [3.17.0](https://github.com/5e-bits/5e-database/compare/v3.16.0...v3.17.0) (2025-04-25)
+
+
+### Bug Fixes
+
+* **npm:** Set to private so we don't publish to npm ([08e582a](https://github.com/5e-bits/5e-database/commit/08e582a848e89c7cd79bd1373332d427c4413663))
+* **npm:** Update npm lockfile ([9fdcf7d](https://github.com/5e-bits/5e-database/commit/9fdcf7dd941856bfe042972598317573e7a8bcb9))
+
+
+### Features
+
+* **release:** Now create CHANGELOG.md and npm version bump with semantic release ([935a3c6](https://github.com/5e-bits/5e-database/commit/935a3c6dce3b7197b563b8f0be279670ba0f4076))

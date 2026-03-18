@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowJs": true,
+    "outDir": "./dist",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  },
+  "include": [
+    "src/js/**/*.js",
+    "src/**/*.ts",
+    "tools/**/*.ts",
+    "vitest.config.ts",
+    "vitest.config.integration.ts",
+    "eslint.config.js"
+  ],
+  "exclude": ["node_modules"],
+  "ts-node": {
+    "esm": true
+  },
+  "typedocOptions": {
+    "entryPoints": ["src/models/index.ts"],
+    "out": "docs"
+  },
+  "tsc-alias": {
+    "resolveFullPaths": true
+  }
+}

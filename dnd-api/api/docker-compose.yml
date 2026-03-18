@@ -1,0 +1,38 @@
+version: '3.8'
+services:
+  mongodb:
+    image: mongo:6
+    volumes:
+      - mongodb_data:/data/db2
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --bind 0.0.0.0
+
+  seeder:
+    build: ../db
+    depends_on:
+      - mongodb
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017/5e-database
+    volumes:
+      - mongodb_data:/data/db2
+    command: sh -c "npm run db:refresh"
+
+  api:
+    build: .
+    ports:
+      - "4588:4588"
+    depends_on:
+      - mongodb
+      - redis
+      - seeder
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017/5e-database
+      REDIS_URL: redis://redis:6379
+    command: sh -c "npm run start"  # ← npm start!
+    volumes:
+      - mongodb_data:/data/db2
+
+volumes:
+  mongodb_data:
