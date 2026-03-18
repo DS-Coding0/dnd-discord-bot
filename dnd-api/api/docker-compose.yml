@@ -16,6 +16,7 @@ services:
     environment:
       MONGODB_URI: mongodb://mongodb:27017/5e-database
     volumes:
+      - ../db:/app
       - mongodb_data:/data/db2
     command: sh -c "npm run db:refresh"
 
@@ -32,6 +33,7 @@ services:
       REDIS_URL: redis://redis:6379
     command: sh -c "npm run start"  # ← npm start!
     volumes:
+      - ../db:/app/db
       - mongodb_data:/data/db2
 
 volumes:
