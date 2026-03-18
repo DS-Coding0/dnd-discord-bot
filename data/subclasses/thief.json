@@ -1,0 +1,17 @@
+{
+  "index": "thief",
+  "class": {
+    "index": "rogue",
+    "name": "Rogue",
+    "url": "/api/2014/classes/rogue"
+  },
+  "name": "Thief",
+  "subclass_flavor": "Roguish Archetype",
+  "desc": [
+    "You hone your skills in the larcenous arts. Burglars, bandits, cutpurses, and other criminals typically follow this archetype, but so do rogues who prefer to think of themselves as professional treasure seekers, explorers, delvers, and investigators. In addition to improving your agility and stealth, you learn skills useful for delving into ancient ruins, reading unfamiliar languages, and using magic items you normally couldn't employ."
+  ],
+  "subclass_levels": "/api/2014/subclasses/thief/levels",
+  "url": "/api/2014/subclasses/thief",
+  "updated_at": "2025-10-24T20:42:14.748Z",
+  "spells": []
+}

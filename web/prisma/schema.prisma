@@ -1,0 +1,158 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int     @id @default(autoincrement())
+  discordId    String  @unique
+  username     String?
+  maxSlots     Int     @default(1)
+  activeCharId Int? // Foreign Key zu Character.id
+
+  characters Character[]
+
+  @@index([discordId])
+  @@map("users")
+}
+
+model Character {
+  id          Int     @id @default(autoincrement())
+  user_Id     Int
+  name        String
+  gender      String?
+  age         Int? // NEU: Alter
+  background  String? // NEU: Herkunft (100 Zeichen)
+  description String? @db.Text // NEU: Kurzbeschreibung
+
+  apiClass String?
+  apiRace  String?
+  level    Int     @default(1)
+
+  // Stats
+  str_score Int @default(10)
+  dex_score Int @default(10)
+  con_score Int @default(10)
+  int_score Int @default(10)
+  wis_score Int @default(10)
+  cha_score Int @default(10)
+
+  // Vitals
+  hp_max     Int     @default(10)
+  hp_current Int     @default(10)
+  ac_base    Int     @default(10)
+  hit_die    String?
+
+  // Leveling
+  xp       Int     @default(0)
+  xp_next  Int     @default(300)
+  features String? @db.Text
+
+  image_path String?
+  is_active  Int     @default(0)
+
+  // Neue Basisfelder
+  alignment    String?
+  speed        Int     @default(30)
+  initiative   Int     @default(0)
+  passive_perc Int?
+  prof_bonus   Int     @default(2)
+  inspiration  Int     @default(0)
+
+  // Saving Throws (6 Felder, prof=1/0)
+  str_save_prof Int @default(0)
+  dex_save_prof Int @default(0)
+  con_save_prof Int @default(0)
+  int_save_prof Int @default(0)
+  wis_save_prof Int @default(0)
+  cha_save_prof Int @default(0)
+
+  // Skills (Beispiel für 3, erweitere auf 18)
+  athletics_prof       Int @default(0)
+  acrobatics_prof      Int @default(0)
+  sleight_of_hand_prof Int @default(0)
+  stealth_prof         Int @default(0)
+  arcana_prof          Int @default(0)
+  history_prof         Int @default(0)
+  investigation_prof   Int @default(0)
+  nature_prof          Int @default(0)
+  religion_prof        Int @default(0)
+  animal_handling_prof Int @default(0)
+  insight_prof         Int @default(0)
+  medicine_prof        Int @default(0)
+  perception_prof      Int @default(0)
+  survival_prof        Int @default(0)
+  deception_prof       Int @default(0)
+  intimidation_prof    Int @default(0)
+  performance_prof     Int @default(0)
+  persuasion_prof      Int @default(0)
+
+  // Zauber
+  spell_class     String?
+  spells_known    Json?
+  prepared_spells Json?
+  spell_slots     Json?
+
+  // Proficiencies
+  armor_prof  Json?
+  weapon_prof Json?
+
+  // Equipment
+  starting_equipment Json?
+
+  inventory InventoryItem[]
+
+  user      User        @relation(fields: [user_Id], references: [id], onDelete: Cascade)
+  CombatLog CombatLog[]
+  Tutorial  Tutorial[]
+
+  @@index([user_Id])
+  @@map("characters")
+}
+
+model InventoryItem {
+  id          Int     @id @default(autoincrement())
+  characterId Int
+  name        String
+  quantity    Int     @default(1)
+  weight      Float?
+  equipped    Boolean @default(false)
+  properties  Json? // z.B. {"damage": "1d8+2", "type": "sword"}
+
+  character Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+}
+
+model CombatLog {
+  id          Int      @id @default(autoincrement())
+  characterId Int
+  type        String // "save", "attack", "skill_check"
+  ability     String // "str_save", "dex_attack"
+  roll        Int // Natürlicher Würfel (1-20)
+  modifier    Int // Berechneter Mod
+  total       Int // Roll + Mod
+  success     Boolean? // true/false/null (ongoing)
+  dc          Int? // Difficulty Class
+  timestamp   DateTime @default(now())
+  notes       String? // "Dodged fireball"
+
+  character Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+
+  @@index([characterId, timestamp])
+  @@map("combat_logs")
+}
+
+model Tutorial {
+  id          Int      @id @default(autoincrement())
+  characterId Int
+  success     Boolean?
+  timestamp   DateTime @default(now())
+
+  character Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+
+  @@index([characterId, timestamp])
+  @@map("tutorials")
+}

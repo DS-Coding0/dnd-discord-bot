@@ -1,0 +1,12 @@
+{
+  "index": "con",
+  "name": "CON",
+  "full_name": "Constitution",
+  "desc": [
+    "Constitution measures health, stamina, and vital force.",
+    "Constitution checks are uncommon, and no skills apply to Constitution checks, because the endurance this ability represents is largely passive rather than involving a specific effort on the part of a character or monster."
+  ],
+  "skills": [],
+  "url": "/api/2014/ability-scores/con",
+  "updated_at": "2025-10-24T20:42:12.130Z"
+}
