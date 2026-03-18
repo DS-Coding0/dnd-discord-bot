@@ -104,6 +104,16 @@ model Character {
   // Equipment
   starting_equipment Json?
 
+  skillsprofs Json?
+  saveprofs Json?
+
+  attacksstr Json?
+  combatstr Json?
+
+  toolprof Json?
+  langprof Json?
+
+
   inventory InventoryItem[]
 
   user      User        @relation(fields: [user_Id], references: [id], onDelete: Cascade)

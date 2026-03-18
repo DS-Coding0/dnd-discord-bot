@@ -124,6 +124,13 @@ class Character(Base):
 
     starting_equipment = Column(Text, default="[]")  # JSON
 
+    skillsprofs = Column(Text, default="[]")  # JSON Array
+    saveprofs = Column(Text, default="[]")  # JSON Array
+    attacksstr = Column(Text, default="[]")  # JSON Array
+    combatstr = Column(Text, default="{}")  # JSON Object
+    toolprofs = Column(Text, default="[]")  # JSON Array
+    langprofs = Column(Text, default="[]")  # JSON Array
+
 
 class InventoryItem(Base):
     __tablename__ = "inventory_items"  # Plural + _

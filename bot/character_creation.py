@@ -1,3 +1,5 @@
+import functools
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -8,7 +10,7 @@ from sqlalchemy import select, func
 import asyncio
 import json
 
-DND_API = "https://www.dnd5eapi.co/api"
+DND_API = "http://localhost:4588/api"
 
 async def get_user(db, discordId, interaction):
     result = await db.execute(select(User).where(User.discordId == discordId))
@@ -81,6 +83,12 @@ async def validate_and_get_bonuses(race_name: str, class_name: str):
                     return None, f"❌ Klasse '{class_name}' ungültig!"
 
     return bonuses, "✅ OK"
+
+async def load_skills_options(self):
+    async with self.cog.session.get(f"{DND_API}/skills") as resp:
+        data = await resp.json()
+    return [discord.SelectOption(label=s['name'], value=s['index']) for s in data['results']]
+
 
 class CharacterCog(commands.Cog):
     def __init__(self, bot):
@@ -169,6 +177,42 @@ class CharSelectView(discord.ui.View):
         embed = discord.Embed(title="✅ Klasse", description=self.class_menu.values[0].upper())
         await interaction.response.edit_message(embed=embed, view=self)
 
+class SkillsSelectView(discord.ui.View):
+    def __init__(self, skills_options, parent, auto_profs=None):
+        super().__init__(timeout=300)
+        self.parent = parent
+        self.auto_profs = auto_profs or set()  # z.B. {'acrobatics', 'stealth'} aus Race/Background
+        self.selected_skills = set(self.auto_profs)  # Auto hinzufügen
+        self.skills_options = skills_options  # Von load_skills_options
+        
+        self.select = discord.ui.Select(
+            placeholder="Skills wählen (Auto: geladen)",
+            min_values=0, max_values=6,  # Flexibel, abh. Class (z.B. Rogue 4)
+            options=self.skills_options
+        )
+        self.select.callback = self.callback
+        self.add_item(self.select)
+
+    async def callback(self, interaction: discord.Interaction):
+        self.selected_skills.update(self.select.values)
+        # Entferne Duplikate
+        self.selected_skills = set(self.selected_skills)
+        
+        prof_count = len(self.selected_skills)
+        embed = discord.Embed(
+            title="Skills gespeichert!",
+            description=f"{prof_count} Skills: {', '.join(self.selected_skills)[:100]}...\nAuto-Profs: {len(self.auto_profs)}",
+            color=0x00ff00
+        )
+        if prof_count >= 2:  # Mindestanzahl, anpassbar
+            self.parent.data['skillsprofs'] = list(self.selected_skills)  # Als Liste für JSON
+            embed.add_field(name="Mods (Beispiel Level 1, Prof+2)", 
+                           value="Athletics +5 (STR4+2), Stealth +4 (DEX2+2)", inline=False)
+            await interaction.response.edit_message(embed=embed, view=None)
+            self.stop()
+        else:
+            embed.color = 0xffaa00
+            await interaction.response.edit_message(embed=embed, view=self)
 
 class BackgroundSelectView(discord.ui.View):
     def __init__(self, options, parent):
@@ -199,6 +243,405 @@ class BackgroundSelectView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=None)
         self.stop()
 
+class AlignmentSelectView(discord.ui.View):
+    def __init__(self, options, parent):
+        super().__init__(timeout=300)
+        self.parent = parent
+        self.select = discord.ui.Select(options=options, placeholder="Alignment wählen")
+        self.select.callback = self.callback
+        self.add_item(self.select)
+
+    async def callback(self, interaction):
+        align_index = self.select.values[0]
+        async with aiohttp.ClientSession() as session:
+            resp = await session.get(f"{DND_API}/alignments/{align_index}")
+            align_data = await resp.json()
+        
+        self.parent.data['alignment'] = {
+            'index': align_data['index'],
+            'name': align_data['name'],
+            'url': align_data['url']
+        }
+        
+        embed = discord.Embed(
+            title=f"✅ {align_data['name']}", 
+            description=f"**{align_data['index'].replace('-',' ').title()}** gespeichert"
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+        self.stop()
+
+class SavingThrowsSelectView(discord.ui.View):
+    def __init__(self, saves_options, parent, auto_profs=None):
+        super().__init__(timeout=300)
+        self.parent = parent
+        self.auto_profs = auto_profs or set()  # z.B. {'str', 'con'} aus Class
+        self.selected_saves = set(self.auto_profs)
+        self.saves_options = saves_options
+        
+        self.select = discord.ui.Select(
+            placeholder="Saving Throws (Auto: geladen)",
+            min_values=0, max_values=2,  # Typisch 2 Profs
+            options=self.saves_options
+        )
+        self.select.callback = self.callback
+        self.add_item(self.select)
+
+    async def callback(self, interaction: discord.Interaction):
+        self.selected_saves.update(self.select.values)
+        self.selected_saves = set(self.selected_saves)  # Dedupe
+        
+        count = len(self.selected_saves)
+        embed = discord.Embed(
+            title="Saving Throws gespeichert!",
+            description=f"{count} Profs: {', '.join(self.selected_saves).upper()}\nAuto: {len(self.auto_profs)}",
+            color=0x00ff00
+        )
+        if count >= 2:
+            self.parent.data['saveprofs'] = list(self.selected_saves)
+            # Beispiel-Mods (Level 1 Prof+2)
+            stats = self.parent.data.get('stats', {})
+            mods_str = ', '.join([f"{s.upper()}: +{calculate_save_mod(s, stats)}" for s in self.selected_saves])
+            embed.add_field(name="Mods (Beispiel)", value=mods_str, inline=False)
+            await interaction.response.edit_message(embed=embed, view=None)
+            self.stop()
+        else:
+            embed.color = 0xffaa00
+            embed.description += "\nWähle mind. 2 (Class-Standard)"
+            await interaction.response.edit_message(embed=embed, view=self)
+
+class PersonalitySelectView(discord.ui.View):
+    def __init__(self, bg_index, parent):
+        super().__init__(timeout=300)
+        self.parent = parent
+        self.bg_index = bg_index  # Aus Background-Select
+        self.data = {'traits': [], 'ideal': '', 'bond': '', 'flaw': ''}
+
+    async def load_bg_personality(self):
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{DND_API}backgrounds/{self.bg_index}") as resp:
+                if resp.status == 200:
+                    bg_data = await resp.json()
+                    return {
+                        'traits': bg_data.get('personality_traits_options', []),
+                        'ideals': bg_data.get('ideal_options', []),
+                        'bonds': bg_data.get('bond_options', []),
+                        'flaws': bg_data.get('flaw_options', [])
+                    }
+        return {'traits': [], 'ideals': [], 'bonds': [], 'flaws': []}
+
+    @discord.ui.button(label="Traits wählen (2)", style=discord.ButtonStyle.primary, row=0)
+    async def traits_step(self, interaction: discord.Interaction, button):
+        options = await self.load_bg_personality()
+        trait_opts = [discord.SelectOption(label=t['desc'][:50], value=t['index']) for t in options['traits'][:25]]
+        modal = TraitModal(self, trait_opts, 'traits')
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Ideal/Bond/Flaw", style=discord.ButtonStyle.secondary, row=0)
+    async def ideals_step(self, interaction: discord.Interaction, button):
+        modal = PersonalityModal(self)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Speichern", style=discord.ButtonStyle.green, row=1)
+    async def save_personality(self, interaction: discord.Interaction, button):
+        if len(self.data['traits']) < 2:
+            return await interaction.response.send_message("Wähle 2 Traits!", ephemeral=True)
+        self.parent.data['personality'] = self.data
+        embed = discord.Embed(title="Personality OK!", 
+                             description=f"Traits: {', '.join(self.data['traits'])}\nIdeal: {self.data['ideal'][:50]}", 
+                             color=0x00ff00)
+        await interaction.response.edit_message(embed=embed, view=None)
+        self.stop()
+
+class TraitModal(discord.ui.Modal, title="Traits wählen"):
+    def __init__(self, view, options, field):
+        super().__init__()
+        self.view = view
+        self.field = field
+        self.select = discord.ui.Select(options=options[:25], min_values=1, max_values=2)
+        self.add_item(self.select)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        self.view.data[self.field] = self.select.values
+        embed = discord.Embed(title=f"{self.field.title()} gespeichert", color=0x00ff00)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+class PersonalityModal(discord.ui.Modal, title="Ideal/Bond/Flaw"):
+    ideal = discord.ui.TextInput(label="Ideal", placeholder="z.B. Beauty", max_length=200)
+    bond = discord.ui.TextInput(label="Bond", placeholder="Mein Dorf", max_length=200)
+    flaw = discord.ui.TextInput(label="Flaw", placeholder="Arrogant", max_length=200)
+
+    def __init__(self, view):
+        super().__init__()
+        self.view = view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        self.view.data['ideal'] = self.ideal.value
+        self.view.data['bond'] = self.bond.value
+        self.view.data['flaw'] = self.flaw.value
+        embed = discord.Embed(title="Personality Details OK!", color=0x00ff00)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+async def load_saves_options(self):
+    # Hardcode 6 Saves (kein API-Endpoint nötig, standardisiert)
+    saves = [
+        {'index': 'str', 'name': 'Strength'},
+        {'index': 'dex', 'name': 'Dexterity'},
+        {'index': 'con', 'name': 'Constitution'},
+        {'index': 'int', 'name': 'Intelligence'},
+        {'index': 'wis', 'name': 'Wisdom'},
+        {'index': 'cha', 'name': 'Charisma'}
+    ]
+    return [discord.SelectOption(label=s['name'], value=s['index']) for s in saves]
+
+async def savesstep(self, interaction, button):
+    if 'stats' not in self.data or len(self.data['stats']) != 6:
+        return await interaction.response.send_message("Zuerst Stats!", ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
+    
+    # Auto aus Class laden (parse /api/classes/{self.class}/saving_throws)
+    auto_profs = await self.load_class_save_profs()  # Siehe unten
+    options = await self.load_saves_options()
+    view = SavingThrowsSelectView(options, self, auto_profs)
+    embed = discord.Embed(title="Saving Throws wählen", description="Class-Profs auto + anpassen")
+    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+async def load_class_save_profs(self):
+    async with self.cog.session.get(f"{DND_API}/classes/{self.class_}") as resp:
+        if resp.status == 200:
+            data = await resp.json()
+            return {save['index'] for save in data.get('saving_throws', [])}
+    return set()  # Fallback
+
+def calculate_save_mod(save_ability, stats, prof_bonus=2, profs_set=None):
+    mod = (stats.get(save_ability, 10) - 10) // 2
+    if profs_set and save_ability in profs_set:
+        mod += prof_bonus
+    return mod
+
+
+class SpellSlotsView(discord.ui.View):
+    def __init__(self, slots_data, parent):
+        super().__init__(timeout=300)
+        self.parent = parent
+        self.slots = slots_data  # {1: {'max':2, 'current':2}, ...}
+
+    @discord.ui.select(placeholder="Level wählen")
+    async def level_select(self, interaction: discord.Interaction, select):
+        # Dynamisch Options setzen (oder pre-load)
+        options = [discord.SelectOption(label=f"L{lvl}: {data['current']}/{data['max']}", value=str(lvl)) 
+                  for lvl, data in self.slots.items()]
+        select.options = options[:25]  # Max 25
+        self.level = int(select.values[0]) if select.values else 1
+        await self.update_embed(interaction)  # Deine update Funktion
+
+
+    @discord.ui.button(label="Short Rest", style=discord.ButtonStyle.blurple)
+    async def short_rest(self, interaction: discord.Interaction, button):
+        # Warlock: Full refresh; andere: keine Änderung
+        if self.parent.data['apiClass'] == 'warlock':
+            self.slots[self.level]['current'] = self.slots[self.level]['max']
+        await self.update_embed(interaction)
+
+    @discord.ui.button(label="Long Rest", style=discord.ButtonStyle.green)
+    async def long_rest(self, interaction: discord.Interaction, button):
+        for lvl in self.slots:
+            self.slots[lvl]['current'] = self.slots[lvl]['max']
+        self.parent.data['spellslots'] = self.slots  # Persist
+        await self.update_embed(interaction)
+
+    async def update_embed(self, interaction):
+        slots_str = f"Level {self.level}: {self.slots[self.level]['current']}/{self.slots[self.level]['max']}"
+        embed = discord.Embed(title=f"Spell Slots (Level {self.parent.data['level']})", 
+                             description=slots_str, color=0x9900ff)
+        embed.add_field(name="Alle Levels", 
+                       value='\n'.join([f"L{lvl}: {data['current']}/{data['max']}" for lvl, data in self.slots.items()]), 
+                       inline=True)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+class AttacksSelectView(discord.ui.View):
+    def __init__(self, parent, equip_data, spells_data, stats, prof_bonus=2):
+        super().__init__(timeout=300)
+        self.parent = parent
+        self.stats = stats  # {'str':15, 'dex':14...}
+        self.prof_bonus = prof_bonus
+        self.attacks = self.generate_attacks(equip_data, spells_data)
+
+    def generate_attacks(self, equip, spells):
+        attacks = []
+        # Weapons aus Equipment
+        for item in equip:
+            if 'equipment' in item and 'index' in item['equipment']:
+                w_index = item['equipment']['index']
+                # Async API-Call in real: damage dice/type, properties (finesse?)
+                w_data = {'name': item.get('name', 'Weapon'), 'dice': '1d8', 'dmg_type': 'piercing', 
+                         'ability': 'str', 'prof': True}  # Finesse -> dex
+                to_hit = self.prof_bonus + ((self.stats[w_data['ability']] - 10) // 2)
+                dmg_bonus = (self.stats[w_data['ability']] - 10) // 2
+                attacks.append({
+                    'name': w_data['name'],
+                    'to_hit': f"d20 + {to_hit}",
+                    'damage': f"{w_data['dice']} + {dmg_bonus} {w_data['dmg_type']}"
+                })
+
+        # Spell Attacks (nur Attack Rolls, z.B. Fire Bolt)
+        for spell_index in spells:
+            s_data = {'name': spell_index.replace('-', ' ').title(), 'dice': '2d10', 'dmg_type': 'fire', 
+                     'ability': 'cha'}  # Spell Stat (cha für Sorcerer etc.)
+            spell_stat_mod = (self.stats[s_data['ability']] - 10) // 2
+            to_hit = self.prof_bonus + spell_stat_mod
+            attacks.append({
+                'name': f"Spell: {s_data['name']}",
+                'to_hit': f"d20 + {to_hit}",
+                'damage': f"{s_data['dice']} {s_data['dmg_type']}"  # Oft keine Mod auf Damage
+            })
+        return attacks[:10]  # Limit
+
+    @discord.ui.button(label="Attacks anzeigen", style=discord.ButtonStyle.primary)
+    async def show_attacks(self, interaction: discord.Interaction, button):
+        attacks_str = '\n'.join([f"**{a['name']}**: {a['to_hit']} | {a['damage']}" for a in self.attacks])
+        embed = discord.Embed(title="Deine Attacks (Level 1)", description=attacks_str, color=0xff6600)
+        embed.add_field(name="Formel", value="**To Hit**: d20 + Prof(2) + Mod\n**Dmg**: Dice + Mod", inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="Speichern", style=discord.ButtonStyle.green)
+    async def save_attacks(self, interaction: discord.Interaction, button):
+        self.parent.data['attacks'] = self.attacks
+        embed = discord.Embed(title="Attacks gespeichert!", description="Verwende /charinfo", color=0x00ff00)
+        await interaction.response.edit_message(embed=embed, view=None)
+        self.stop()
+
+class CombatTrackerView(discord.ui.View):
+    def __init__(self, combat_data, parent):  # {'inspiration': False, 'temp_hp': 0, 'hit_dice_used': 0, 'death_saves': {'success':0, 'fail':0}}
+        super().__init__(timeout=None)  # Persistent!
+        self.parent = parent
+        self.data = combat_data
+
+    @discord.ui.button(label="Inspiration", style=discord.ButtonStyle.blurple, emoji="⭐")
+    async def toggle_inspiration(self, interaction: discord.Interaction, button):
+        self.data['inspiration'] = not self.data['inspiration']
+        button.label = "Inspiration" + (" ON" if self.data['inspiration'] else " OFF")
+        button.style = discord.ButtonStyle.green if self.data['inspiration'] else discord.ButtonStyle.blurple
+        self.parent.data['combat'] = self.data  # Persist
+        await interaction.response.edit_message(view=self)
+
+    @discord.ui.button(label="+Temp HP", style=discord.ButtonStyle.secondary, emoji="❤️")
+    async def add_temp_hp(self, interaction: discord.Interaction, button):
+        self.data['temp_hp'] += 5  # Oder Modal für Wert
+        await self.update_embed(interaction)
+
+    @discord.ui.button(label="-Temp HP", style=discord.ButtonStyle.danger, emoji="💔")
+    async def sub_temp_hp(self, interaction: discord.Interaction, button):
+        self.data['temp_hp'] = max(0, self.data['temp_hp'] - 5)
+        await self.update_embed(interaction)
+
+    @discord.ui.button(label="Hit Die (Spend)", style=discord.ButtonStyle.grey, emoji="🎲")
+    async def spend_hit_die(self, interaction: discord.Interaction, button):
+        if self.data['hit_dice_used'] < 1:  # Max 1 L1
+            self.data['hit_dice_used'] += 1
+        await self.update_embed(interaction)
+
+    @discord.ui.button(label="Death Save +", style=discord.ButtonStyle.success, emoji="✅", row=1)
+    async def death_success(self, interaction: discord.Interaction, button):
+        self.data['death_saves']['success'] = min(3, self.data['death_saves']['success'] + 1)
+        if self.data['death_saves']['success'] == 3:
+            button.disabled = True
+        await self.update_embed(interaction)
+
+    @discord.ui.button(label="Death Save Fail", style=discord.ButtonStyle.danger, emoji="❌", row=1)
+    async def death_fail(self, interaction: discord.Interaction, button):
+        self.data['death_saves']['fail'] = min(3, self.data['death_saves']['fail'] + 1)
+        if self.data['death_saves']['fail'] == 3:
+            button.disabled = True
+        await self.update_embed(interaction)
+
+    @discord.ui.button(label="Reset Combat", style=discord.ButtonStyle.red, row=1)
+    async def reset(self, interaction: discord.Interaction, button):
+        self.data = {'inspiration': False, 'temp_hp': 0, 'hit_dice_used': 0, 'death_saves': {'success':0, 'fail':0}}
+        self.parent.data['combat'] = self.data
+        await self.update_embed(interaction)
+
+    async def update_embed(self, interaction):
+        embed = discord.Embed(title="Combat Tracker", color=0x00ff00)
+        embed.add_field(name="Inspiration", value="✅" if self.data['inspiration'] else "❌", inline=True)
+        embed.add_field(name="Temp HP", value=self.data['temp_hp'], inline=True)
+        embed.add_field(name="Hit Dice Used", value=f"{self.data['hit_dice_used']}/1", inline=True)
+        embed.add_field(name="Death Saves", value=f"S: {self.data['death_saves']['success']}/3 | F: {self.data['death_saves']['fail']}/3", inline=False)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+class ToolsLanguagesSelectView(discord.ui.View):
+    def __init__(self, parent, tool_options, lang_options, auto_tools=None, auto_langs=None):
+        super().__init__(timeout=300)
+        self.parent = parent
+        self.auto_tools = auto_tools or set()  # {'thieves-tools', 'navigators-tools'}
+        self.auto_langs = auto_langs or set()  # {'common', 'elvish'}
+        self.selected_tools = set(self.auto_tools)
+        self.selected_langs = set(self.auto_langs)
+        self.tool_options = tool_options
+        self.lang_options = lang_options
+
+    @discord.ui.button(label="Tools wählen", style=discord.ButtonStyle.primary, row=0)
+    async def tools_step(self, interaction: discord.Interaction, button):
+        select = discord.ui.Select(placeholder="Tools (max 2 extra)", options=self.tool_options[:25], min_values=0, max_values=2)
+        await interaction.response.send_message("Wähle Tools:", view=ToolSelectView(select, self), ephemeral=True)
+
+    @discord.ui.button(label="Languages wählen", style=discord.ButtonStyle.secondary, row=0)
+    async def langs_step(self, interaction: discord.Interaction, button):
+        select = discord.ui.Select(placeholder="Languages (1 extra)", options=self.lang_options[:25], min_values=0, max_values=1)
+        await interaction.response.send_message("Wähle Language:", view=LangSelectView(select, self), ephemeral=True)
+
+    @discord.ui.button(label="Speichern", style=discord.ButtonStyle.green, row=1)
+    async def save_profs(self, interaction: discord.Interaction, button):
+        self.parent.data['toolprofs'] = list(self.selected_tools)
+        self.parent.data['langprofs'] = list(self.selected_langs)
+        embed = discord.Embed(
+            title="Tools & Languages OK!",
+            description=f"Tools: {len(self.selected_tools)} ({', '.join(self.selected_tools)[:50]})\nLangs: {len(self.selected_langs)} ({', '.join(self.selected_langs)})",
+            color=0x00ff00
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+        self.stop()
+
+class ToolSelectView(discord.ui.View):
+    def __init__(self, select, parent_view):
+        super().__init__(timeout=60)
+        self.parent_view = parent_view
+        self.add_item(select)
+        select.callback = self.callback
+
+    async def callback(self, interaction):
+        self.parent_view.selected_tools.update(select.values)
+        embed = discord.Embed(title="Tools gespeichert!", color=0x00ff00)
+        await interaction.response.edit_message(embed=embed, view=None)
+
+class LangSelectView(discord.ui.View):  # Ähnlich für Languages
+    def __init__(self, select, parent_view):
+        super().__init__(timeout=60)
+        self.parent_view = parent_view
+        self.add_item(select)
+        select.callback = self.callback
+
+    async def callback(self, interaction):
+        self.parent_view.selected_langs.update(select.values)
+        embed = discord.Embed(title="Langs gespeichert!", color=0x00ff00)
+        await interaction.response.edit_message(embed=embed, view=None)
+
+async def load_tool_options(self):
+    async with self.cog.session.get(f"{DND_API}proficiencies?type=tool") as resp:  # Oder equipment-categories/tool
+        data = await resp.json()
+    return [discord.SelectOption(label=p['name'], value=p['index']) for p in data.get('results', [])[:25]]
+
+async def load_lang_options(self):
+    async with self.cog.session.get(f"{DND_API}languages") as resp:
+        data = await resp.json()
+    return [discord.SelectOption(label=l['name'], value=l['index']) for l in data.get('results', [])]
+
+async def load_auto_profs(self):
+    # Merge aus Race/Class/Background (schon teilweise in Code)
+    auto_tools = self.data.get('backgroundprofs', {}).get('tools', [])
+    auto_langs = self.data.get('backgroundprofs', {}).get('languages', [])
+    return auto_tools, auto_langs
+
 
 class CharStepView(discord.ui.View):
     def __init__(self, race, class_, user_id, cog):
@@ -213,6 +656,8 @@ class CharStepView(discord.ui.View):
             'stats': {}, 'prepared_spells': None
         }
         self.data['equipment'] = []
+        self.data['skillsprofs'] = {}
+        self.data['combat'] = {'inspiration': False, 'temp_hp': 0, 'hit_dice_used': 0, 'death_saves': {'success':0, 'fail':0}}
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
@@ -227,33 +672,33 @@ class CharStepView(discord.ui.View):
 
     @discord.ui.button(label="2️⃣ Stats 1/2", style=discord.ButtonStyle.secondary, row=0)
     async def stats1_step(self, interaction: discord.Interaction, button):
-        if not self.data['name']:
-            await interaction.response.send_message("❌ Schritt 1 zuerst!", ephemeral=True)
-            return
+        # if not self.data['name']:
+        #     await interaction.response.send_message("❌ Schritt 1 zuerst!", ephemeral=True)
+        #     return
         modal = StatsModal1(self)
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="3️⃣ Stats 2/2", style=discord.ButtonStyle.secondary, row=0)
     async def stats2_step(self, interaction: discord.Interaction, button):
-        if len(self.data['stats']) < 3:
-            await interaction.response.send_message("❌ Stats 1/3 zuerst!", ephemeral=True)
-            return
+        # if len(self.data['stats']) < 3:
+        #     await interaction.response.send_message("❌ Stats 1/3 zuerst!", ephemeral=True)
+        #     return
         modal = StatsModal2(self)
         await interaction.response.send_modal(modal)
     
-    @discord.ui.button(label="4️⃣ Details", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="4️⃣ Details", style=discord.ButtonStyle.secondary, row=0)
     async def details_step(self, interaction: discord.Interaction, button):
-        if not self.data['stats']:
-            await interaction.response.send_message("❌ Zuerst Stats!", ephemeral=True)
-            return
+        # if not self.data['stats']:
+        #     await interaction.response.send_message("❌ Zuerst Stats!", ephemeral=True)
+        #     return
         modal = DetailsModal(self)
         await interaction.response.send_modal(modal)
     
     @discord.ui.button(label="5️⃣ API-Spells", style=discord.ButtonStyle.blurple, row=1)
     async def spells_step(self, interaction: discord.Interaction, button):
-        if len(self.data['stats']) != 6:
-            await interaction.response.send_message("❌ Zuerst alle 6 Stats!", ephemeral=True)
-            return
+        # if len(self.data['stats']) != 6:
+        #     await interaction.response.send_message("❌ Zuerst alle 6 Stats!", ephemeral=True)
+        #     return
         
         await interaction.response.defer(ephemeral=True)  # IMMER defer bei async API
         
@@ -334,54 +779,123 @@ class CharStepView(discord.ui.View):
             'known_count': max(1, spells_known_num or 2)  # Default 2 wenn 0
         }
     
-    @discord.ui.button(label="6️⃣ Equipment", style=discord.ButtonStyle.blurple, row=1)
-    async def equipment_step(self, interaction: discord.Interaction, button):
-        if len(self.data['stats']) != 6:
-            await interaction.response.send_message("❌ Zuerst alle Stats!", ephemeral=True)
-            return
-        
-        await interaction.response.defer(ephemeral=True)
-        try:
-            equip_data = await self.load_api_equipment()
-            view = EquipmentSelectView(equip_data, self)
-            embed = discord.Embed(
-                title="🛡️ Starting Equipment",
-                description=f"**Fix: {len(equip_data['fixed'])} Items**\n**Optionen: {sum(o.get('choose',0) for o in equip_data['options'])} Wahlen**"
-            )
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Equipment API: {e}\nSkip (leeres Array)", ephemeral=True)
+    async def load_spell_slots(self):
+        # Holt levels/1 für Level 1
+        levels_url = f"{DND_API}/classes/{self.class_}/levels/1"
+        async with self.cog.session.get(levels_url) as resp:
+            if resp.status == 200:
+                level_data = await resp.json()
+                spellcasting = level_data.get('spellcasting', {})
+                slots = {}
+                for slot_level, count in spellcasting.get('spell_slots', {}).items():
+                    slots[int(slot_level)] = {'max': count, 'current': count}
+                return slots
+        return {1: {'max': 0, 'current': 0}}  # Non-Caster
 
     
+    @discord.ui.button(label="6️⃣ Equipment", style=discord.ButtonStyle.blurple, row=1)
+    async def equipment_step(self, interaction: discord.Interaction, button):
+        await interaction.response.defer(ephemeral=True)
+        equip_data = await self.load_api_equipment()
+        
+        if not equip_data['options'] and not equip_data['fixed']:
+            await interaction.followup.send("❌ Kein Equipment gefunden", ephemeral=True)
+            return
+        
+        view = EquipmentSelectView(equip_data, self)
+        embed = discord.Embed(title="🛡️ Starting Equipment", description=f"{len(equip_data['fixed'])} Fix + {len(equip_data['options'])} Wahlen")
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+
 
     # Neue load_api_equipment Methode (ähnlich load_api_spells):
     async def load_api_equipment(self):
         async with self.cog.session as session:
             class_url = f"{DND_API}/classes/{self.class_}"
+            print(f"Loading equipment from {class_url}")
+            
             async with session.get(class_url) as resp:
-                if resp.status != 200:
-                    return {'fixed': [], 'options': []}
+                if resp.status != 200: return {'fixed': [], 'options': []}
                 class_data = await resp.json()
             
-            fixed = class_data.get('starting_equipment', [])
+            fixed = []
+            for item in class_data.get('starting_equipment', []):
+                if isinstance(item, dict) and 'equipment' in item:
+                    fixed.append({'name': item['equipment']['name'], 'index': item['equipment']['index']})
+            
             options = class_data.get('starting_equipment_options', [])
             
-            # Für jede Option: Lade Category-Items falls nötig (vereinfacht, top 10)
-            for opt in options:
-                if opt.get('from', {}).get('equipment_category'):
-                    cat_index = opt['from']['equipment_category']['index']
-                    cat_url = f"{DND_API}/equipment-categories/{cat_index}"
+            def find_all_categories(opt_from):
+                """BRUTEFORCE - findet JEDES equipment_category, egal wie tief."""
+                categories = []
+                
+                def search(node):
+                    if not isinstance(node, dict): return
+                    if 'equipment_category' in node:
+                        cat = node['equipment_category']
+                        if isinstance(cat, dict) and cat.get('index'):
+                            categories.append(cat)
+                    for v in node.values():
+                        search(v)
+                
+                search(opt_from)
+                return categories
+            
+            # 🔥 HARDCODE Patterns für die 3 fehlenden Warlock OPTs
+            for i, opt in enumerate(options):
+                print(f"\n--- OPT {i}: '{opt.get('desc','?')[:60]}' ---")
+                
+                # 1. Normale Suche
+                categories = find_all_categories(opt.get('from', {}))
+                
+                # 2. HARDCODE für bekannte Patterns
+                from_node = opt.get('from', {})
+                if from_node.get('options'):
+                    for opt_item in from_node['options']:
+                        # Warlock OPT0/1: options[1].choice.from.equipment_category
+                        if opt_item.get('choice'):
+                            choice_from = opt_item['choice'].get('from', {})
+                            cat = choice_from.get('equipment_category')
+                            if cat and cat.get('index'):
+                                categories.append(cat)
+                                print(f"  HARDCODE: Found {cat['index']} in choice")
+                
+                print(f"  Total {len(categories)} categories:")
+                for cat in categories:
+                    print(f"    → {cat['index']}")
+                
+                # Laden...
+                opt['choices'] = []
+                opt['choose'] = opt.get('choose', 1)
+                seen = set()
+                
+                for cat in categories:
+                    cat_index = cat['index']
                     try:
-                        async with session.get(cat_url) as cat_resp:
+                        async with session.get(f"{DND_API}/equipment-categories/{cat_index}") as cat_resp:
                             if cat_resp.status == 200:
                                 cat_data = await cat_resp.json()
-                                opt['choices'] = [eq['name'] for eq in cat_data.get('equipment', [])[:10]]
+                                for eq in cat_data.get('equipment', [])[:8]:
+                                    name = eq['name']
+                                    if name not in seen:
+                                        opt['choices'].append(name)
+                                        seen.add(name)
+                                print(f"  Loaded {len(opt['choices'])} from {cat_index}")
                     except:
-                        opt['choices'] = ['Fallback Item']
+                        opt['choices'].append(f"[Failed {cat_index}]")
+                
+                opt['choices'] = opt['choices'][:25]
+                print(f"  ✅ {len(opt['choices'])} Choices")
             
+            print(f"\n🎯 DONE: {len(fixed)} fixed, {sum(len(o['choices']) for o in options)} total")
             return {'fixed': fixed, 'options': options}
 
-    @discord.ui.button(label="7️⃣ Background", style=discord.ButtonStyle.secondary, row=2)
+
+
+
+
+
+    @discord.ui.button(label="7️⃣ Background", style=discord.ButtonStyle.secondary, row=1)
     async def background_step(self, interaction: discord.Interaction, button):
         # API: https://DND_API/backgrounds
         async with aiohttp.ClientSession() as session:
@@ -394,9 +908,94 @@ class CharStepView(discord.ui.View):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
+    @discord.ui.button(label="🧭 8️⃣ Alignment", style=discord.ButtonStyle.secondary, row=1)
+    async def alignment_step(self, interaction: discord.Interaction, button):
+        """API-Alignment Auswahl (dynamisch!)"""
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{DND_API}/alignments") as resp:
+                data = await resp.json()
+                align_options = [discord.SelectOption(label=a['name'], value=a['index']) 
+                            for a in data['results'][:9]]  # Nur 9 Standard
+        
+        view = AlignmentSelectView(align_options, self)
+        embed = discord.Embed(title="🧭 Alignment wählen", description="API-Daten geladen!")
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
-    @discord.ui.button(label="✅ Fertig", style=discord.ButtonStyle.green, row=2)
+    @discord.ui.button(label="9 Skills", style=discord.ButtonStyle.secondary, row=2)
+    async def skillsstep(self, interaction: discord.Interaction, button):
+        if len(self.data['stats']) != 6:
+            await interaction.response.send_message("Zuerst Stats!", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        skills_options = await load_skills_options(self)
+        view = SkillsSelectView(skills_options, self)
+        embed = discord.Embed(title="Skills wählen", description="Auto-Profs geladen + wähle frei")
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="🔟 Saving Throws", style=discord.ButtonStyle.secondary, row=2)
+    async def savestep(self, interaction: discord.Interaction, button):
+        if len(self.data['stats']) != 6:
+            await interaction.response.send_message("Zuerst Stats!", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        
+        auto_profs = await self.load_class_save_profs()
+        options = await self.load_saves_options()
+        view = SavingThrowsSelectView(options, self, auto_profs)
+        embed = discord.Embed(title="Saving Throws wählen", description="Class-Profs auto + anpassen")
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+    
+    @discord.ui.button(label="11 Personality", style=discord.ButtonStyle.secondary, row=2)
+    async def personalitystep(self, interaction, button):
+        if 'background' not in self.data:
+            return await interaction.response.send_message("Zuerst Background!", ephemeral=True)
+        bg_index = self.data['background'].get('index', 'adventurer')  # Aus Background data
+        await interaction.response.defer(ephemeral=True)
+        view = PersonalitySelectView(bg_index, self)
+        embed = discord.Embed(title="Personality Traits (aus Background)", description="Klicke Buttons!")
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+    
+    @discord.ui.button(label="12 Spell Slots", style=discord.ButtonStyle.blurple, row=2)
+    async def spellslotsstep(self, interaction, button):
+        if self.data.get('spellclass') is None:
+            return await interaction.response.send_message("Nur für Caster!", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        slots = await self.load_spell_slots()
+        view = SpellSlotsView(self, slots)
+        embed = discord.Embed(title="Spell Slots laden", description="Track & Rest!")
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="13 Attacks", style=discord.ButtonStyle.primary, row=3)
+    async def attacksstep(self, interaction, button):
+        if not all(k in self.data for k in ['stats', 'equipment', 'preparedspells']):
+            return await interaction.response.send_message("Zuerst Stats/Equip/Spells!", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        equip = json.loads(self.data['equipment']) if self.data['equipment'] else []
+        spells = json.loads(self.data['preparedspells']) if self.data['preparedspells'] else []
+        prof_bonus = 2  # Level 1
+        view = AttacksSelectView(self, equip, spells, self.data['stats'], prof_bonus)
+        embed = discord.Embed(title="Attacks generieren", description="Aus Equipment + Spells")
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="14 Combat Tracker", style=discord.ButtonStyle.red, row=3)
+    async def combattrackerstep(self, interaction, button):
+        combat_data = self.data.get('combat', {'inspiration': False, 'temp_hp': 0, 'hit_dice_used': 0, 'death_saves': {'success':0, 'fail':0}})
+        view = CombatTrackerView(combat_data, self)
+        embed = discord.Embed(title="Combat Tracker aktivieren", description="Persistent für Sessions!")
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=False)  # Nicht ephemeral, sharebar
+
+    @discord.ui.button(label="15 Tools/Languages", style=discord.ButtonStyle.secondary, row=3)
+    async def toolslangsstep(self, interaction, button):
+        tool_opts = await self.load_tool_options()
+        lang_opts = await self.load_lang_options()
+        auto_tools, auto_langs = await self.load_auto_profs()
+        view = ToolsLanguagesSelectView(tool_opts, lang_opts, auto_tools, auto_langs, self)
+        embed = discord.Embed(title="Tools & Languages", description="Auto + Extra wählen")
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+    @discord.ui.button(label="✅ Fertig", style=discord.ButtonStyle.green, row=3)
     async def finish(self, interaction: discord.Interaction, button):
         if not all([self.data['name'], len(self.data['stats']) == 6, 'equipment' in self.data]):
             await interaction.response.send_message("❌ Name + Stats + Equipment!", ephemeral=True)
@@ -405,7 +1004,7 @@ class CharStepView(discord.ui.View):
         await interaction.response.edit_message(view=self)
         await self.create_character(interaction)
 
-    @discord.ui.button(label="❌ Abbrechen", style=discord.ButtonStyle.danger, row=2)
+    @discord.ui.button(label="❌ Abbrechen", style=discord.ButtonStyle.danger, row=4)
     async def cancel(self, interaction: discord.Interaction, button):
         embed = discord.Embed(title="❌ Abgebrochen", color=0xff0000)
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -496,6 +1095,14 @@ class CharStepView(discord.ui.View):
             spells_known = len(safe_spells)
         
         equipment_json = self.data.get('equipment', '[]')  # Bereits JSON-String
+        skillsprofs_json = json.dumps(self.data.get('skillsprofs', []))
+        saveprofs_json = json.dumps(self.data.get('saveprofs', []))
+        personality_json = json.dumps(self.data.get('personality', {}))
+        spellslots_json = json.dumps(self.data.get('spellslots', {}))
+        attacks_json = json.dumps(self.data.get('attacks', []))
+        combat_json = json.dumps(self.data.get('combat', {}))
+        toolprofs_json = json.dumps(self.data.get('toolprofs', []))
+        langprofs_json = json.dumps(self.data.get('langprofs', []))
 
         # DB Speichern
         async for db in get_async_db():
@@ -521,15 +1128,22 @@ class CharStepView(discord.ui.View):
                 features="[]",
                 image_path=None,
                 is_active=0,
-                alignment="neutral",
+                alignment=self.data.get('alignment', {}).get('index', 'neutral'),
                 speed=speed,
                 initiative=(final_stats['dex_score']-10)//2,
                 passive_perc=10+(final_stats['wis_score']-10)//2,
                 spell_class=spell_class,
                 spells_known=spells_known,
+                spell_slots=spellslots_json,
                 prepared_spells=prepared_spells,
                 starting_equipment=equipment_json,
-                spell_slots=None,
+                skillsprofs = skillsprofs_json,
+                saveprofs = saveprofs_json,
+                personalitystr = personality_json,
+                attacksstr=attacks_json,
+                combatstr=combat_json,
+                toolprofstr=toolprofs_json,
+                langprofstr=langprofs_json,
                 armor_prof=str(armor_profs)[:100],
                 weapon_prof=str(weapon_profs)[:100],
                 **{f"{s}_save_prof": 0 for s in ['str','dex','con','int','wis','cha']},
@@ -603,6 +1217,13 @@ class CharStepView(discord.ui.View):
         if equipment_json != '[]':
             equip_preview = json.loads(equipment_json)[:5]
             embed.add_field(name="🛡️ Equipment", value=', '.join([e.get('name','?') for e in equip_preview]), inline=True)
+        if 'alignment' in self.data:
+            align = self.data['alignment']
+            embed.add_field(
+                name="🧭 Alignment", 
+                value=f"{align['name']} [{align['index'].replace('-',' ').title()}]", 
+                inline=True
+            )
         embed.add_field(name="⚔️ Commands", value="`/charinfo` `/charswitch` `/tutorial start`", inline=True)
 
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -613,52 +1234,100 @@ class EquipmentSelectView(discord.ui.View):
         super().__init__(timeout=300)
         self.parent_view = parent_view
         self.equip_data = equip_data
-        self.selected_equip = self.equip_data['fixed'].copy()  # Fixe immer mitnehmen
+        self.selected_equip = []
+        for f in equip_data['fixed']:
+            self.selected_equip.append(f)
+        self.completed = set()
         
-        # Dynamische Selects für jede Option (max 3-4 pro View)
-        for i, opt in enumerate(equip_data['options'][:3]):  # Limit für UX
-            choices = opt.get('choices', ['Keine Optionen'])
-            select_opts = [discord.SelectOption(label=c, value=c) for c in choices[:25]]
-            select = discord.ui.Select(
-                placeholder=f"Wähle {opt.get('choose',1)} aus {opt.get('type','?')}",
-                options=select_opts, min_values=1, max_values=min(opt.get('choose',1), len(choices))
-            )
-            select.callback = lambda inter, idx=i: self.equip_callback(inter, idx)
-            self.add_item(select)
+        for i, opt in enumerate(equip_data['options']):
+            desc = opt.get('desc', f'Option {i+1}')
+            choices = opt.get('choices', [])
+            
+            if choices:
+                # ✅ KEIN functools - einfache Lambda mit default arg
+                select = discord.ui.Select(
+                    placeholder=f"{desc[:40]} ({opt.get('choose',1)}x)",
+                    options=[discord.SelectOption(label=c, value=c) for c in choices[:25]],
+                    min_values=1,
+                    max_values=min(opt.get('choose',1), len(choices))
+                )
+                select.callback = lambda interaction, opt_idx=i: self.select_callback(interaction, opt_idx)
+                self.add_item(select)
+            else:
+                button = discord.ui.Button(label=desc[:25], style=discord.ButtonStyle.secondary)
+                button.callback = lambda interaction, opt_idx=i: self.button_callback(interaction, opt_idx)
+                self.add_item(button)
         
-        if not equip_data['options']:
-            embed = discord.Embed(title="✅ Keine Wahlen nötig", description="Nur fixe Items!")
-            # Auto-speichern
-
-    async def equip_callback(self, interaction: discord.Interaction, opt_idx):
+        self.add_item(SaveButton(self.parent_view, self.selected_equip))
+    
+    async def select_callback(self, interaction: discord.Interaction, opt_idx: int):
+        print(f"Select callback: opt {opt_idx}")  # Debug
+        if opt_idx in self.completed:
+            await interaction.response.send_message("✅ Bereits gewählt!", ephemeral=True)
+            return
+        
         opt = self.equip_data['options'][opt_idx]
-        choose_count = opt.get('choose', 1)
-        selected = interaction.data['values'][:choose_count]
+        selected = interaction.data['values']
         
-        for _ in range(choose_count):
-            if selected:
-                self.selected_equip.append({'name': selected.pop(0), 'quantity': 1})
+        for name in selected:
+            self.selected_equip.append({'name': name, 'quantity': 1})
         
-        # Update Embed mit aktueller Liste
-        equip_list = ', '.join([f"{e.get('equipment','').get('name','?') or e.get('name','?')} (x{e.get('quantity',1)})" 
-                               for e in self.selected_equip[:10]])
-        embed = discord.Embed(title="🛡️ Equipment", description=equip_list)
+        self.completed.add(opt_idx)
+        await self.update_embed(interaction)
+    
+    async def button_callback(self, interaction: discord.Interaction, opt_idx: int):
+        print(f"Button callback: opt {opt_idx}")
+        opt = self.equip_data['options'][opt_idx]
+        # Pack-Option A als Default
+        self.selected_equip.append({'name': "Scholar's Pack", 'quantity': 1})  # OPT 2 Default
+        self.completed.add(opt_idx)
+        await self.update_embed(interaction)
+    
+    async def update_embed(self, interaction):
+        status = []
+        total_opts = len(self.equip_data['options'])
+        for i in range(total_opts):
+            mark = "✅" if i in self.completed else "⏳"
+            opt_desc = self.equip_data['options'][i].get('desc', '?')[:20]
+            status.append(f"{mark} {opt_desc}")
+        
+        recent_items = ', '.join([e['name'] for e in self.selected_equip[-4:]])
+        embed = discord.Embed(
+            title=f"🛡️ Equipment ({len(self.completed)}/{total_opts})",
+            description=f"**Status:**\n" + "\n".join(status) + 
+            f"\n\n**{len(self.selected_equip)} Items:**\n{recent_items}"
+        )
         await interaction.response.edit_message(embed=embed, view=self)
-        
-        # Check if all options done
-        if len(self.selected_equip) >= len(self.equip_data['fixed']) + sum(o.get('choose',0) for o in self.equip_data['options']):
-            self.parent_view.data['equipment'] = json.dumps(self.selected_equip)
-            embed.title = "✅ Equipment gespeichert!"
-            embed.color = 0x00ff00
-            await interaction.edit_original_response(embed=embed, view=None)
-            self.stop()
 
-    @discord.ui.button(label="✅ Speichern", style=discord.ButtonStyle.green)
-    async def save_equip(self, interaction: discord.Interaction, button):
+class SaveButton(discord.ui.Button):
+    def __init__(self, parent_view, selected_equip):
+        super().__init__(label="💾 Speichern", style=discord.ButtonStyle.green)
+        self.parent_view = parent_view
+        self.selected_equip = selected_equip  # Reference
+    
+    async def callback(self, interaction: discord.Interaction):
         self.parent_view.data['equipment'] = json.dumps(self.selected_equip)
-        embed = discord.Embed(title="✅ Equipment OK!", description=f"{len(self.selected_equip)} Items")
+        embed = discord.Embed(title="✅ Equipment gespeichert!", color=0x00ff00)
+        embed.add_field(name="Items", value=f"{len(self.selected_equip)} total", inline=False)
         await interaction.response.edit_message(embed=embed, view=None)
-        self.stop()
+
+
+
+
+
+# Separater Save-Button (damit er korrekt funktioniert)
+class SaveButton(discord.ui.Button):
+    def __init__(self, parent_view, selected_equip):
+        super().__init__(label="✅ Speichern", style=discord.ButtonStyle.green)
+        self.parent_view = parent_view
+        self.selected_equip = selected_equip
+    
+    async def callback(self, interaction: discord.Interaction):
+        self.parent_view.data['equipment'] = json.dumps(self.selected_equip)
+        embed = discord.Embed(title="✅ Equipment gespeichert!", description=f"{len(self.selected_equip)} Items")
+        await interaction.response.edit_message(embed=embed, view=None)
+        self.view.stop()
+
 
 
 # SpellSelectView (NEU!)
@@ -736,14 +1405,14 @@ class NameDetailsModal(discord.ui.Modal, title="1️⃣ Name"):
         embed = discord.Embed(title="✅ Name gesetzt", description=self.view.data['name'])
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-class StatsModal1(discord.ui.Modal, title="📊 Stats 1/3"):
+class StatsModal1(discord.ui.Modal, title="📊 Stats 1/2"):
     def __init__(self, view):
         super().__init__()
         self.view = view
 
-    str_score = discord.ui.TextInput(label="STR", placeholder="15", max_length=2)
-    dex_score = discord.ui.TextInput(label="DEX", placeholder="14", max_length=2)
-    con_score = discord.ui.TextInput(label="CON", placeholder="13", max_length=2)
+    str_score = discord.ui.TextInput(label="STR", placeholder="Unique aus 15,14,13,12,10,8", max_length=2)
+    dex_score = discord.ui.TextInput(label="DEX", placeholder="Unique aus 15,14,13,12,10,8", max_length=2)
+    con_score = discord.ui.TextInput(label="CON", placeholder="Unique aus 15,14,13,12,10,8", max_length=2)
 
     async def on_submit(self, interaction):
         try:
@@ -768,9 +1437,9 @@ class StatsModal2(discord.ui.Modal, title="📊 Stats 2/3"):
         super().__init__()
         self.view = view
 
-    int_score = discord.ui.TextInput(label="INT", placeholder="12", max_length=2)
-    wis_score = discord.ui.TextInput(label="WIS", placeholder="10", max_length=2)
-    cha_score = discord.ui.TextInput(label="CHA", placeholder="8", max_length=2)
+    int_score = discord.ui.TextInput(label="INT", placeholder="Unique aus 15,14,13,12,10,8", max_length=2)
+    wis_score = discord.ui.TextInput(label="WIS", placeholder="Unique aus 15,14,13,12,10,8", max_length=2)
+    cha_score = discord.ui.TextInput(label="CHA", placeholder="Unique aus 15,14,13,12,10,8", max_length=2)
 
     async def on_submit(self, interaction):
         try:
